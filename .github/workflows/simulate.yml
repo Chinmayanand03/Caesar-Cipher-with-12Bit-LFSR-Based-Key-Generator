@@ -1,0 +1,51 @@
+name: RTL Simulation
+
+# Compiles the design with Icarus Verilog and runs both testbenches on
+# every push/PR. vvp always exits 0 once a simulation reaches $finish
+# regardless of what the testbench printed, so pass/fail is determined
+# here by grepping each run's own "TESTBENCH RESULT: PASS" line -- the
+# same string a human reads when running sim/run.sh locally.
+on:
+  push:
+  pull_request:
+
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Icarus Verilog
+        run: sudo apt-get update && sudo apt-get install -y iverilog
+
+      - name: System-level testbench (UART -> encrypt -> decrypt -> UART)
+        run: |
+          iverilog -g2012 -o sim/tb.vvp \
+            rtl/baud_tick_gen.v \
+            rtl/crypto_encoder_block.v \
+            rtl/crypto_decoder_block.v \
+            rtl/uart_receiver_fsm.v \
+            rtl/uart_transmitter_fsm.v \
+            rtl/system_control_fsm.v \
+            rtl/top_system_integration.v \
+            tb/top_system_testbench.v
+          vvp sim/tb.vvp | tee sim/run.log
+          grep -q "TESTBENCH RESULT: PASS" sim/run.log
+
+      - name: LFSR standalone period / lock-up test
+        run: |
+          iverilog -g2012 -o sim/lfsr_test.vvp \
+            rtl/crypto_encoder_block.v \
+            tb/lfsr_period_test.v
+          vvp sim/lfsr_test.vvp | tee sim/lfsr_test.log
+          grep -q "TESTBENCH RESULT: PASS" sim/lfsr_test.log
+
+      - name: Upload simulation logs and waveform
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: simulation-results
+          path: |
+            sim/run.log
+            sim/lfsr_test.log
+            sim/top_system_testbench.vcd
